@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AuthenticationException
+from app.core.exceptions import AuthenticationException, ValidationException
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.token import LogoutResponse, Token
@@ -32,10 +32,33 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token, summary="User login")
-def login(credentials: UserLogin, db: Session = Depends(get_db)):
-    """Authenticate user credentials and return JWT access token."""
+async def login(request: Request, db: Session = Depends(get_db)):
+    """
+    Authenticate user credentials via JSON or Form-Data (Swagger UI Authorize modal)
+    and return JWT access token.
+    """
+    content_type = request.headers.get("content-type", "")
+    email = None
+    password = None
+
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        email = form.get("username") or form.get("email")
+        password = form.get("password")
+    else:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                email = body.get("email") or body.get("username")
+                password = body.get("password")
+        except Exception:
+            pass
+
+    if not email or not password:
+        raise ValidationException("Email/username and password are required")
+
     auth_service = AuthService(db)
-    return auth_service.authenticate_user(email=credentials.email, password=credentials.password)
+    return auth_service.authenticate_user(email=str(email), password=str(password))
 
 
 @router.post("/logout", response_model=LogoutResponse, summary="User logout (Revoke token)")
